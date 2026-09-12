@@ -7,8 +7,11 @@ import { OutboxPublisher } from "./modules/bus/outbox-publisher.js";
 import { PostgresEventBus } from "./modules/bus/postgres-bus.js";
 import { auditLogHandler } from "./modules/audit/handler.js";
 import { WorkflowEngine } from "./modules/workflow/engine.js";
-import { orderFulfillmentWorkflow } from "./modules/workflow/order-fulfillment.js";
+import { workflowDefinitions } from "./modules/workflow/registry.js";
 import { registerWorkflowQueryRoutes } from "./modules/workflow/routes.js";
+import { ProjectionWorker } from "./modules/projections/worker.js";
+import { registerProjectionRoutes } from "./modules/projections/routes.js";
+import { registerDashboardStream } from "./modules/projections/sse.js";
 
 const app = Fastify({ logger: false });
 
@@ -19,24 +22,31 @@ app.get("/healthz", async () => {
 
 await registerIngestRoutes(app);
 await registerWorkflowQueryRoutes(app);
+await registerProjectionRoutes(app);
+await registerDashboardStream(app);
 
 const outboxPublisher = new OutboxPublisher();
 const eventBus = new PostgresEventBus();
 eventBus.subscribe("domain.events", "audit-log", auditLogHandler);
 
 const workflowEngine = new WorkflowEngine(eventBus);
-workflowEngine.register(orderFulfillmentWorkflow);
+for (const def of workflowDefinitions) workflowEngine.register(def);
+
+const projectionWorker = new ProjectionWorker();
 
 if (config.runWorkers) {
   outboxPublisher.start();
   eventBus.start();
   workflowEngine.start();
-  log("info", "workers started", { workers: ["outbox-publisher", "event-bus:audit-log", "workflow-engine:order-fulfillment"] });
+  projectionWorker.start();
+  log("info", "workers started", {
+    workers: ["outbox-publisher", "event-bus:audit-log", "workflow-engine", "projection-worker"],
+  });
 } else {
   log("info", "workers disabled (RUN_WORKERS=false)");
 }
 
-app.setErrorHandler((err, _req, reply) => {
+app.setErrorHandler((err: Error, _req, reply) => {
   log("error", "unhandled route error", { err: err.message, stack: err.stack });
   reply.code(500).send({ error: "internal_error", message: "Something went wrong." });
 });
@@ -55,6 +65,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     await outboxPublisher.stop();
     await eventBus.stop();
     await workflowEngine.stop();
+    await projectionWorker.stop();
     await app.close();
     await pool.end();
     process.exit(0);
