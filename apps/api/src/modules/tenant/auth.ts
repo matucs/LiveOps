@@ -13,8 +13,18 @@ declare module "fastify" {
   }
 }
 
-function hashKey(rawKey: string): string {
+export function hashKey(rawKey: string): string {
   return createHash("sha256").update(rawKey).digest("hex");
+}
+
+export async function resolveTenant(rawKey: string): Promise<TenantContext | null> {
+  const keyHash = hashKey(rawKey);
+  const { rows } = await pool.query<{ id: string; tenant_id: string }>(
+    `SELECT id, tenant_id FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`,
+    [keyHash],
+  );
+  const row = rows[0];
+  return row ? { tenantId: row.tenant_id, apiKeyId: row.id } : null;
 }
 
 /**
@@ -32,17 +42,11 @@ export async function requireTenant(request: FastifyRequest, reply: FastifyReply
     return reply;
   }
 
-  const keyHash = hashKey(rawKey);
-  const { rows } = await pool.query<{ id: string; tenant_id: string }>(
-    `SELECT id, tenant_id FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`,
-    [keyHash],
-  );
-
-  const row = rows[0];
-  if (!row) {
+  const tenant = await resolveTenant(rawKey);
+  if (!tenant) {
     reply.code(401).send({ error: "invalid_api_key", message: "This API key is invalid or has been revoked." });
     return reply;
   }
 
-  request.tenant = { tenantId: row.tenant_id, apiKeyId: row.id };
+  request.tenant = tenant;
 }

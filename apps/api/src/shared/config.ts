@@ -6,6 +6,7 @@ export const config = {
   // separate worker process entirely, with zero changes to the modules
   // themselves. See ADR on service extraction strategy.
   runWorkers: process.env.RUN_WORKERS !== "false",
+  webOrigins: (process.env.WEB_ORIGINS ?? "http://localhost:3001").split(",").map((s) => s.trim()),
   outbox: {
     pollIntervalMs: Number(process.env.OUTBOX_POLL_INTERVAL_MS ?? 250),
     batchSize: Number(process.env.OUTBOX_BATCH_SIZE ?? 50),

@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import { config } from "./shared/config.js";
 import { log } from "./shared/telemetry.js";
 import { registerIngestRoutes } from "./modules/ingest/routes.js";
@@ -14,6 +15,15 @@ import { registerProjectionRoutes } from "./modules/projections/routes.js";
 import { registerDashboardStream } from "./modules/projections/sse.js";
 
 const app = Fastify({ logger: false });
+
+// The dashboard (apps/web) runs on its own origin and calls this API
+// directly rather than through a same-origin proxy — command/query API
+// and UI are genuinely separate deployables, so CORS is the honest
+// choice here, not a rewrite that hides the boundary. Locked to the
+// configured web origin(s), not "*".
+await app.register(cors, {
+  origin: config.webOrigins,
+});
 
 app.get("/healthz", async () => {
   await pool.query("SELECT 1");

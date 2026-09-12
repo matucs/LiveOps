@@ -6,10 +6,12 @@
   "type": "module",
   "scripts": {
     "dev": "npm run dev --workspace apps/api",
-    "migrate": "node --experimental-strip-types apps/api/src/db/migrate.ts",
+    "dev:web": "npm run dev --workspace apps/web",
+    "migrate": "npm run migrate --workspace apps/api",
     "build": "npm run build --workspace apps/api"
   },
   "workspaces": [
-    "apps/api"
+    "apps/api",
+    "apps/web"
   ]
 }
