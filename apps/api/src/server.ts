@@ -6,6 +6,9 @@ import { pool } from "./db/pool.js";
 import { OutboxPublisher } from "./modules/bus/outbox-publisher.js";
 import { PostgresEventBus } from "./modules/bus/postgres-bus.js";
 import { auditLogHandler } from "./modules/audit/handler.js";
+import { WorkflowEngine } from "./modules/workflow/engine.js";
+import { orderFulfillmentWorkflow } from "./modules/workflow/order-fulfillment.js";
+import { registerWorkflowQueryRoutes } from "./modules/workflow/routes.js";
 
 const app = Fastify({ logger: false });
 
@@ -15,15 +18,20 @@ app.get("/healthz", async () => {
 });
 
 await registerIngestRoutes(app);
+await registerWorkflowQueryRoutes(app);
 
 const outboxPublisher = new OutboxPublisher();
 const eventBus = new PostgresEventBus();
 eventBus.subscribe("domain.events", "audit-log", auditLogHandler);
 
+const workflowEngine = new WorkflowEngine(eventBus);
+workflowEngine.register(orderFulfillmentWorkflow);
+
 if (config.runWorkers) {
   outboxPublisher.start();
   eventBus.start();
-  log("info", "workers started", { workers: ["outbox-publisher", "event-bus:audit-log"] });
+  workflowEngine.start();
+  log("info", "workers started", { workers: ["outbox-publisher", "event-bus:audit-log", "workflow-engine:order-fulfillment"] });
 } else {
   log("info", "workers disabled (RUN_WORKERS=false)");
 }
@@ -46,6 +54,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     log("info", "shutting down", { signal });
     await outboxPublisher.stop();
     await eventBus.stop();
+    await workflowEngine.stop();
     await app.close();
     await pool.end();
     process.exit(0);
