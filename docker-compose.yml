@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-liveops}
+      POSTGRES_USER: ${POSTGRES_USER:-liveops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-liveops_dev_password}
+    ports:
+      - "5434:5432"
+    volumes:
+      - liveops_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-liveops} -d ${POSTGRES_DB:-liveops}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  liveops_pg_data:

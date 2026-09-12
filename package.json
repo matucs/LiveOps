@@ -1,0 +1,15 @@
+{
+  "name": "liveops",
+  "private": true,
+  "version": "0.1.0",
+  "description": "LiveOps — real-time event processing & workflow platform (V1: modular monolith on Postgres)",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev --workspace apps/api",
+    "migrate": "node --experimental-strip-types apps/api/src/db/migrate.ts",
+    "build": "npm run build --workspace apps/api"
+  },
+  "workspaces": [
+    "apps/api"
+  ]
+}
