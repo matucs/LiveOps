@@ -1,7 +1,8 @@
 import type { PoolClient } from "pg";
 import { randomUUID } from "node:crypto";
 import { withTransaction } from "../../db/pool.js";
-import { withSpan } from "../../shared/telemetry.js";
+import { withSpan, currentTraceContext } from "../../shared/telemetry.js";
+import { eventsIngestedTotal } from "../metrics/registry.js";
 import type { EventEnvelope } from "./schema.js";
 
 export interface IngestResult {
@@ -27,13 +28,18 @@ export async function ingestEvent(tenantId: string, envelope: EventEnvelope): Pr
     return withTransaction(async (client: PoolClient) => {
       const occurredAt = envelope.occurredAt ?? new Date().toISOString();
       const correlationId = envelope.correlationId ?? envelope.eventId;
+      // Captured here (inside withSpan's active context) and persisted on
+      // the row, so a consumer/workflow step running later — a different
+      // async loop, possibly after a restart — can still link its own
+      // spans back to this same trace. See withLinkedSpan.
+      const { traceId, spanId } = currentTraceContext();
 
       const insert = await client.query<{ seq: string }>(
-        `INSERT INTO events (event_id, tenant_id, type, correlation_id, causation_id, payload, occurred_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO events (event_id, tenant_id, type, correlation_id, causation_id, payload, occurred_at, trace_id, trace_span_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT ON CONSTRAINT uq_events_tenant_event DO NOTHING
          RETURNING seq`,
-        [envelope.eventId, tenantId, envelope.type, correlationId, envelope.causationId ?? null, envelope.payload, occurredAt],
+        [envelope.eventId, tenantId, envelope.type, correlationId, envelope.causationId ?? null, envelope.payload, occurredAt, traceId ?? null, spanId ?? null],
       );
 
       if (insert.rows.length === 0) {
@@ -59,6 +65,7 @@ export async function ingestEvent(tenantId: string, envelope: EventEnvelope): Pr
         [eventSeq, "domain.events"],
       );
 
+      eventsIngestedTotal.inc({ tenantId });
       return { eventSeq, eventId: envelope.eventId, correlationId, wasDuplicate: false };
     });
   });

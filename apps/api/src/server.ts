@@ -14,6 +14,8 @@ import { ProjectionWorker } from "./modules/projections/worker.js";
 import { registerProjectionRoutes } from "./modules/projections/routes.js";
 import { registerDashboardStream } from "./modules/projections/sse.js";
 import { registerDemoRoutes } from "./modules/demo/routes.js";
+import { GaugeUpdater } from "./modules/metrics/gauge-updater.js";
+import { registry, httpRequestsTotal, httpRequestDuration } from "./modules/metrics/registry.js";
 
 const app = Fastify({ logger: false });
 
@@ -31,6 +33,20 @@ app.get("/healthz", async () => {
   return { status: "ok" };
 });
 
+app.addHook("onResponse", async (request, reply) => {
+  // request.routeOptions.url is the route PATTERN ("/api/v1/workflows/:id"),
+  // not the raw URL with real IDs interpolated — the label cardinality
+  // that actually matters for a metrics backend.
+  const route = request.routeOptions?.url ?? request.url;
+  httpRequestsTotal.inc({ method: request.method, route, status: String(reply.statusCode) });
+  httpRequestDuration.observe({ method: request.method, route }, reply.elapsedTime / 1000);
+});
+
+app.get("/metrics", async (_request, reply) => {
+  reply.header("Content-Type", registry.contentType);
+  return registry.metrics();
+});
+
 await registerIngestRoutes(app);
 await registerWorkflowQueryRoutes(app);
 await registerProjectionRoutes(app);
@@ -45,14 +61,16 @@ const workflowEngine = new WorkflowEngine(eventBus);
 for (const def of workflowDefinitions) workflowEngine.register(def);
 
 const projectionWorker = new ProjectionWorker();
+const gaugeUpdater = new GaugeUpdater();
 
 if (config.runWorkers) {
   outboxPublisher.start();
   eventBus.start();
   workflowEngine.start();
   projectionWorker.start();
+  gaugeUpdater.start();
   log("info", "workers started", {
-    workers: ["outbox-publisher", "event-bus:audit-log", "workflow-engine", "projection-worker"],
+    workers: ["outbox-publisher", "event-bus:audit-log", "workflow-engine", "projection-worker", "gauge-updater"],
   });
 } else {
   log("info", "workers disabled (RUN_WORKERS=false)");
@@ -78,6 +96,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     await eventBus.stop();
     await workflowEngine.stop();
     await projectionWorker.stop();
+    gaugeUpdater.stop();
     await app.close();
     await pool.end();
     process.exit(0);

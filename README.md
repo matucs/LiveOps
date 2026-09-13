@@ -80,6 +80,8 @@ flowchart TB
 | [007](docs/adr/ADR-007-sse-over-websockets.md) | SSE over WebSockets for a one-directional dashboard feed |
 | [008](docs/adr/ADR-008-multi-tenancy.md) | Shared schema, single tenant-resolution chokepoint |
 | [009](docs/adr/ADR-009-deployment-topology.md) | Build locally, ship pre-built images to a free-tier VM — found a real timing bug in production |
+| [010](docs/adr/ADR-010-redis-usage.md) | Redis — not used, each candidate use case already has a better answer |
+| [011](docs/adr/ADR-011-observability.md) | Trace context persisted as data, not ambient state — one continuous trace across every async boundary |
 
 ## Failure scenarios, demonstrated
 

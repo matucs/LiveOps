@@ -16,5 +16,21 @@ services:
       timeout: 3s
       retries: 10
 
+  # Local-only observability (ADR-011). Opt in with:
+  #   docker compose --profile observability up -d
+  # Never run in production — the deployed VM has ~1GB RAM total and no
+  # headroom for a trace backend alongside the app stack; see
+  # docs/observability.md for what production gets instead (structured
+  # JSON logs with trace/span IDs, no trace UI).
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    restart: unless-stopped
+    profiles: ["observability"]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4318:4318"   # OTLP HTTP receiver
+
 volumes:
   liveops_pg_data:

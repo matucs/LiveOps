@@ -1,6 +1,7 @@
 import { pool } from "../../db/pool.js";
 import { config } from "../../shared/config.js";
-import { log } from "../../shared/telemetry.js";
+import { log, withLinkedSpan } from "../../shared/telemetry.js";
+import { workflowCompletedTotal, workflowCompensatedTotal, workflowFailedTotal } from "../metrics/registry.js";
 import { backoffMs, sleep } from "../bus/retry.js";
 import type { EventBus, BusMessage } from "../bus/types.js";
 import type { StepContext, WorkflowDefinition } from "./types.js";
@@ -31,6 +32,8 @@ interface ExecutionRow {
   status: string;
   current_step: number;
   context: Record<string, unknown>;
+  trace_id: string | null;
+  trace_span_id: string | null;
 }
 
 interface StepExecRow {
@@ -86,10 +89,18 @@ export class WorkflowEngine {
     // check — this is belt-and-suspenders logging, the constraint is the
     // actual guarantee.
     await pool.query(
-      `INSERT INTO workflow_executions (tenant_id, definition, correlation_id, trigger_event_seq, context)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO workflow_executions (tenant_id, definition, correlation_id, trigger_event_seq, context, trace_id, trace_span_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (definition, trigger_event_seq) WHERE trigger_event_seq IS NOT NULL DO NOTHING`,
-      [message.tenantId, definition.name, message.correlationId, message.seq, JSON.stringify({ trigger: message.payload })],
+      [
+        message.tenantId,
+        definition.name,
+        message.correlationId,
+        message.seq,
+        JSON.stringify({ trigger: message.payload }),
+        message.traceId,
+        message.traceSpanId,
+      ],
     );
   }
 
@@ -120,7 +131,7 @@ export class WorkflowEngine {
          LIMIT $3
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, tenant_id, definition, correlation_id, status, current_step, context`,
+       RETURNING id, tenant_id, definition, correlation_id, status, current_step, context, trace_id, trace_span_id`,
       [this.instanceId, leaseUntil, config.workflow.batchSize],
     );
 
@@ -164,6 +175,7 @@ export class WorkflowEngine {
         `UPDATE workflow_executions SET status = 'completed', locked_by = NULL, locked_until = NULL, updated_at = now() WHERE id = $1`,
         [row.id],
       );
+      workflowCompletedTotal.inc({ definition: definition.name });
       return;
     }
 
@@ -190,7 +202,12 @@ export class WorkflowEngine {
     ).rows[0].id;
 
     try {
-      const result = await withTimeout(step.execute(ctx), step.timeoutMs);
+      const result = await withLinkedSpan(
+        { traceId: row.trace_id, spanId: row.trace_span_id },
+        `workflow.step ${definition.name}/${step.name}`,
+        { executionId: row.id, step: step.name, stepIndex: row.current_step, attempt: attemptNumber, direction: "forward" },
+        () => withTimeout(step.execute(ctx), step.timeoutMs),
+      );
       await pool.query(`UPDATE step_executions SET status = 'succeeded', finished_at = now() WHERE id = $1`, [stepExecId]);
 
       const newContext = { ...row.context, [step.name]: result ?? {} };
@@ -275,6 +292,7 @@ export class WorkflowEngine {
         [row.id, finalStatus],
       );
       log(anyGivenUp ? "error" : "info", "compensation finished", { executionId: row.id, finalStatus });
+      (anyGivenUp ? workflowFailedTotal : workflowCompensatedTotal).inc({ definition: definition.name });
       return;
     }
 
@@ -296,7 +314,12 @@ export class WorkflowEngine {
     ).rows[0].id;
 
     try {
-      await withTimeout(step.compensate(ctx), step.timeoutMs);
+      await withLinkedSpan(
+        { traceId: row.trace_id, spanId: row.trace_span_id },
+        `workflow.compensate ${definition.name}/${step.name}`,
+        { executionId: row.id, step: step.name, stepIndex: candidateIndex, attempt: attemptNumber, direction: "compensate" },
+        () => withTimeout(step.compensate(ctx), step.timeoutMs),
+      );
       await pool.query(`UPDATE step_executions SET status = 'succeeded', finished_at = now() WHERE id = $1`, [stepExecId]);
       await pool.query(`UPDATE workflow_executions SET locked_by = NULL, locked_until = NULL, updated_at = now() WHERE id = $1`, [
         row.id,

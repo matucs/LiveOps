@@ -1,6 +1,6 @@
 import { pool } from "../../db/pool.js";
 import { config } from "../../shared/config.js";
-import { log } from "../../shared/telemetry.js";
+import { log, withLinkedSpan } from "../../shared/telemetry.js";
 import { backoffMs, sleep } from "./retry.js";
 import type { BusMessage, EventBus, Handler } from "./types.js";
 
@@ -81,8 +81,10 @@ export class PostgresEventBus implements EventBus {
       causation_id: string | null;
       payload: Record<string, unknown>;
       occurred_at: string;
+      trace_id: string | null;
+      trace_span_id: string | null;
     }>(
-      `SELECT e.seq, e.event_id, e.tenant_id, e.type, e.correlation_id, e.causation_id, e.payload, e.occurred_at
+      `SELECT e.seq, e.event_id, e.tenant_id, e.type, e.correlation_id, e.causation_id, e.payload, e.occurred_at, e.trace_id, e.trace_span_id
        FROM events e
        JOIN outbox o ON o.event_seq = e.seq
        WHERE o.topic = $1 AND o.status = 'dispatched' AND e.seq > $2
@@ -103,6 +105,8 @@ export class PostgresEventBus implements EventBus {
         causationId: row.causation_id,
         payload: row.payload,
         occurredAt: row.occurred_at,
+        traceId: row.trace_id,
+        traceSpanId: row.trace_span_id,
       };
 
       await this.deliverWithRetry(sub, message);
@@ -123,7 +127,12 @@ export class PostgresEventBus implements EventBus {
     let attempt = 0;
     while (true) {
       try {
-        await sub.handler(message);
+        await withLinkedSpan(
+          { traceId: message.traceId, spanId: message.traceSpanId },
+          `bus.deliver ${sub.group}`,
+          { group: sub.group, eventId: message.eventId, eventType: message.type, attempt },
+          () => sub.handler(message),
+        );
         return;
       } catch (err: any) {
         attempt += 1;

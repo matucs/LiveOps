@@ -14,6 +14,11 @@ export interface BusMessage {
   causationId: string | null;
   payload: Record<string, unknown>;
   occurredAt: string;
+  /** The trace this event's ingest request started, if tracing is enabled
+   * (see telemetry.ts's withLinkedSpan) — lets a consumer's spans join
+   * the same trace instead of starting a disconnected one. */
+  traceId: string | null;
+  traceSpanId: string | null;
 }
 
 export type Handler = (message: BusMessage) => Promise<void>;

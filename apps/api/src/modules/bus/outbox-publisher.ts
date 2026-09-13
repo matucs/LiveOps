@@ -1,6 +1,6 @@
 import { pool } from "../../db/pool.js";
 import { config } from "../../shared/config.js";
-import { log } from "../../shared/telemetry.js";
+import { log, withSpan } from "../../shared/telemetry.js";
 
 /**
  * The outbox publisher. Its only job: move rows from `pending` to
@@ -65,15 +65,21 @@ export class OutboxPublisher {
       if (claimed.rows.length === 0) return;
 
       const ids = claimed.rows.map((r) => r.id);
-      // "Publishing" in the V1 Postgres transport is the act of marking the
-      // row dispatched — that transition is what consumer groups poll for.
-      // A real Kafka publisher would produce() here instead, and would only
-      // mark dispatched after the broker ack'd.
-      await pool.query(
-        `UPDATE outbox SET status = 'dispatched', dispatched_at = now(), attempts = attempts + 1
-         WHERE id = ANY($1::bigint[])`,
-        [ids],
-      );
+      // A batch mixes many events' independent traces, so this is its own
+      // top-level span rather than linked to any one of them — see
+      // bus.deliver (postgres-bus.ts) for where per-event trace linking
+      // resumes, downstream of this batch-shaped step.
+      await withSpan("outbox.dispatch_batch", { count: ids.length }, async () => {
+        // "Publishing" in the V1 Postgres transport is the act of marking
+        // the row dispatched — that transition is what consumer groups
+        // poll for. A real Kafka publisher would produce() here instead,
+        // and would only mark dispatched after the broker ack'd.
+        await pool.query(
+          `UPDATE outbox SET status = 'dispatched', dispatched_at = now(), attempts = attempts + 1
+           WHERE id = ANY($1::bigint[])`,
+          [ids],
+        );
+      });
 
       log("info", "outbox batch dispatched", { count: ids.length, instanceId: this.instanceId });
     } catch (err) {

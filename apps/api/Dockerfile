@@ -6,8 +6,9 @@ COPY apps/web/package.json apps/web/package.json
 RUN npm ci --workspace apps/api --include-workspace-root
 COPY apps/api apps/api
 RUN npm run build --workspace apps/api \
-    && mkdir -p apps/api/dist/db/migrations \
-    && cp apps/api/src/db/migrations/*.sql apps/api/dist/db/migrations/
+    && mkdir -p apps/api/dist/db/migrations apps/api/dist/otel \
+    && cp apps/api/src/db/migrations/*.sql apps/api/dist/db/migrations/ \
+    && cp apps/api/src/otel/register.mjs apps/api/dist/otel/register.mjs
 
 FROM node:20-alpine
 WORKDIR /app
@@ -17,4 +18,4 @@ COPY --from=build /app/apps/api/package.json apps/api/package.json
 RUN npm ci --workspace apps/api --omit=dev --include-workspace-root
 COPY --from=build /app/apps/api/dist apps/api/dist
 EXPOSE 3000
-CMD ["sh", "-c", "node apps/api/dist/db/migrate.js && node apps/api/dist/server.js"]
+CMD ["sh", "-c", "node apps/api/dist/db/migrate.js && node --import ./apps/api/dist/otel/register.mjs apps/api/dist/server.js"]
