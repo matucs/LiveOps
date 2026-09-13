@@ -17,4 +17,15 @@ export const config = {
     leaseMs: Number(process.env.CONSUMER_LEASE_MS ?? 10_000),
     maxAttempts: Number(process.env.CONSUMER_MAX_ATTEMPTS ?? 5),
   },
+  workflow: {
+    // How many executions the engine claims per tick. Phase 06's load test
+    // found this was hardcoded at 10 and was the dominant throughput limit
+    // once the event-consumption side was fixed: a fixed claim size means
+    // completion rate stays flat regardless of backlog size, producing the
+    // "slow, then suddenly fast as the backlog shrinks" curve documented in
+    // docs/phase-06-notes.md. Made configurable rather than just bumped —
+    // the right value depends on step cost and DB capacity, which varies
+    // by deployment.
+    batchSize: Number(process.env.WORKFLOW_ENGINE_BATCH_SIZE ?? 50),
+  },
 };

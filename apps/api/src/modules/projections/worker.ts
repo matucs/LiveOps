@@ -2,7 +2,7 @@ import { pool } from "../../db/pool.js";
 import { config } from "../../shared/config.js";
 import { log } from "../../shared/telemetry.js";
 import { sleep } from "../bus/retry.js";
-import { stepCountFor } from "../workflow/registry.js";
+import { workflowDefinitions } from "../workflow/registry.js";
 
 /**
  * The projection worker. This is the "Q" side of CQRS: it is the ONLY
@@ -118,33 +118,40 @@ export class ProjectionWorker {
    * purely from the event log would require projecting every step
    * transition as its own event, which Phase 03 does not currently emit.
    * Flagged as a known simplification, not hidden.
+   *
+   * Bulk upsert, not one query per row: the first version of this method
+   * looped over changed executions and issued one INSERT...ON CONFLICT per
+   * row. That was invisible at demo scale and became the dominant cost
+   * under Phase 06's load test — with ~3,000+ workflow_executions rows
+   * touched in the lookback window, this ran ~3,000 sequential round trips
+   * on *every* tick, throttling every consumer sharing the connection pool.
+   * Fixed by joining a small VALUES list (workflow definitions — bounded
+   * by the number of distinct workflows, not the number of executions) so
+   * the whole refresh is one statement. See docs/phase-06-notes.md for the
+   * before/after numbers.
    */
   private async refreshWorkflowProjection(): Promise<void> {
-    const { rows } = await pool.query<{
-      id: string;
-      tenant_id: string;
-      definition: string;
-      status: string;
-      current_step: number;
-      correlation_id: string;
-      error: string | null;
-      updated_at: string;
-    }>(`SELECT id, tenant_id, definition, status, current_step, correlation_id, error, updated_at
-        FROM workflow_executions WHERE updated_at > now() - interval '1 hour'`);
+    if (workflowDefinitions.length === 0) return;
 
-    for (const we of rows) {
-      await pool.query(
-        `INSERT INTO projection_workflow_summary
-           (execution_id, tenant_id, definition, status, current_step, step_count, correlation_id, error, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (execution_id) DO UPDATE SET
-           status = EXCLUDED.status,
-           current_step = EXCLUDED.current_step,
-           step_count = EXCLUDED.step_count,
-           error = EXCLUDED.error,
-           updated_at = EXCLUDED.updated_at`,
-        [we.id, we.tenant_id, we.definition, we.status, we.current_step, stepCountFor(we.definition), we.correlation_id, we.error, we.updated_at],
-      );
-    }
+    const stepCountValues = workflowDefinitions.map((d, i) => `($${i * 2 + 1}::text, $${i * 2 + 2}::int)`).join(", ");
+    const stepCountParams = workflowDefinitions.flatMap((d) => [d.name, d.steps.length]);
+
+    await pool.query(
+      `WITH step_counts(definition, step_count) AS (VALUES ${stepCountValues})
+       INSERT INTO projection_workflow_summary
+         (execution_id, tenant_id, definition, status, current_step, step_count, correlation_id, error, updated_at)
+       SELECT we.id, we.tenant_id, we.definition, we.status, we.current_step, sc.step_count,
+              we.correlation_id, we.error, we.updated_at
+       FROM workflow_executions we
+       JOIN step_counts sc ON sc.definition = we.definition
+       WHERE we.updated_at > now() - interval '1 hour'
+       ON CONFLICT (execution_id) DO UPDATE SET
+         status = EXCLUDED.status,
+         current_step = EXCLUDED.current_step,
+         step_count = EXCLUDED.step_count,
+         error = EXCLUDED.error,
+         updated_at = EXCLUDED.updated_at`,
+      stepCountParams,
+    );
   }
 }

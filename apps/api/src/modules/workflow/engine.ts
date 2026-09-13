@@ -117,20 +117,30 @@ export class WorkflowEngine {
          SELECT id FROM workflow_executions
          WHERE status IN ('running', 'compensating') AND (locked_until IS NULL OR locked_until < now())
          ORDER BY updated_at
-         LIMIT 10
+         LIMIT $3
          FOR UPDATE SKIP LOCKED
        )
        RETURNING id, tenant_id, definition, correlation_id, status, current_step, context`,
-      [this.instanceId, leaseUntil],
+      [this.instanceId, leaseUntil, config.workflow.batchSize],
     );
 
     if (rows.length === 0) return false;
 
-    for (const row of rows) {
-      await this.processExecution(row).catch((err) =>
-        log("error", "processExecution failed", { executionId: row.id, err: err.message }),
-      );
-    }
+    // Process the claimed batch concurrently, not sequentially: each row is
+    // a distinct execution_id touching only its own rows, so there's no
+    // shared state between them. Phase 06's load test found that raising
+    // WORKFLOW_ENGINE_BATCH_SIZE alone made no measurable difference to
+    // completion time — claiming more per tick just made each tick take
+    // proportionally longer under the old `for...await` loop, since total
+    // sequential DB round trips was unchanged. Concurrency, not batch size,
+    // was the actual lever; the connection pool (`pool.ts`, max 10) is the
+    // real ceiling on how much this can help, which is the honest limit —
+    // raising it further is a documented follow-up, not done blindly here.
+    await Promise.all(
+      rows.map((row) =>
+        this.processExecution(row).catch((err) => log("error", "processExecution failed", { executionId: row.id, err: err.message })),
+      ),
+    );
     return true;
   }
 
