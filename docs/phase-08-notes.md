@@ -73,13 +73,42 @@ kind of interaction (a feature test run under conditions that happen to
 disable a different feature) that only surfaces by actually running
 things, not by reading the code.
 
-## Not done in this phase, and why
+## 4. Automated failure test suite
 
-- **Full automated failure test suite** (DB down, consumer crash mid-batch,
-  etc.) — planned as the next sub-phase; everything verified so far was
-  a manual, live, one-off test against the running dev stack, which is
-  real verification but not a regression suite.
-- **Tenant isolation as an automated test** — the isolation *mechanism*
-  (ADR-008) is unchanged and was manually re-verified as part of the DLQ
-  route's tenant-scoping join; a standing automated test is separate,
-  planned next.
+`tests/failure/run-all.mjs` — six scenarios, each turning a manual,
+one-off verification from earlier phase notes into something that
+regresses loudly instead of silently:
+
+| # | Scenario | What it actually does |
+|---|---|---|
+| 01 | Duplicate event | Same `eventId` POSTed 5×, asserts exactly 1 row and the right response shape each time |
+| 02 | Tenant isolation | Two real tenants, one populated with real events/workflows; asserts the other sees zero of it and gets 404 fetching the first tenant's execution ID directly |
+| 03 | Saga compensation ordering | Forces permanent shipment failure, asserts the exact reverse compensation order via `step_executions`, and that the step which never succeeded forward is excluded |
+| 04 | Circuit breaker | Forces 3 consecutive payment failures, asserts `/metrics` shows the breaker open (state=2) |
+| 05 | Process crash mid-burst | Spawns its own API instance on a separate port, kills it `-9` mid-flight, restarts, asserts zero duplicate events and every landed event's workflow completed |
+| 06 | Database unavailable | Stops the real Postgres container mid-test, asserts ingest fails with a clean 5xx (not a hang), restarts Postgres, asserts ingest recovers with no manual intervention |
+
+Run: `docker compose up -d postgres && npm run dev` (in another terminal),
+then `node tests/failure/run-all.mjs`.
+
+### A test that passed for the wrong reason, caught before it shipped
+
+The first version of scenario 05 used a fixed `sleep(15)` between firing
+the request batch and sending `SIGKILL`. On this machine, that consistently
+let **zero** events land before the kill — so the test's own assertions
+(0 duplicates, 0 completed workflows out of 0 events landed) were
+trivially true without exercising crash recovery at all. It reported
+`PASS` for a scenario that never actually happened.
+
+Fixed by polling for a real landed row (`intervalMs: 2`) instead of
+guessing a fixed delay, and adding an explicit assertion
+(`beforeRestart.rows[0].n > 0`) that fails loudly if nothing landed
+before the kill — the exact failure mode just found. Re-run: 6-7 of 60
+events consistently land before the kill now, a genuine partial-crash
+scenario, with 0 duplicates and every landed event's workflow completing
+after restart.
+
+This is worth stating plainly: a test suite is also code, and "it says
+PASS" is not the same claim as "it tested what it claims to." The fix
+above is exactly the kind of thing this whole project's discipline exists
+to catch.
