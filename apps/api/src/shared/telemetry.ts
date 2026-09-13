@@ -63,12 +63,28 @@ export async function withLinkedSpan<T>(
   return context.with(ctxWithParent, () => runSpan(name, attrs, fn));
 }
 
-/** Reads the currently active span's IDs, for persisting alongside a row
- * (see `withLinkedSpan`) or for including in a log line. */
+/**
+ * Reads the currently active span's IDs, for persisting alongside a row
+ * (see `withLinkedSpan`) or for including in a log line.
+ *
+ * When no SDK is running (production, or any local run without
+ * OTEL_EXPORTER_OTLP_ENDPOINT set), the no-op tracer still returns a
+ * span from `startActiveSpan` — it just carries the spec's reserved
+ * all-zero "invalid" SpanContext, not `undefined`. Checked explicitly
+ * here (`trace.isSpanContextValid`) rather than trusting a merely
+ * non-null value: an event ingested while tracing was off would
+ * otherwise persist that all-zero ID as if it were a real trace,
+ * and a later `withLinkedSpan` reading it back would try to extend an
+ * unextendable context instead of correctly falling back to a fresh
+ * root span. Found while testing backpressure with tracing
+ * intentionally off, then re-enabled — exactly the kind of gap this
+ * project's whole discipline is to catch by actually running it.
+ */
 export function currentTraceContext(): { traceId?: string; spanId?: string } {
   const span = trace.getSpan(context.active());
   if (!span) return {};
   const ctx = span.spanContext();
+  if (!trace.isSpanContextValid(ctx)) return {};
   return { traceId: ctx.traceId, spanId: ctx.spanId };
 }
 

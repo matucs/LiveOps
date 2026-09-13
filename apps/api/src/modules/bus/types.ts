@@ -36,4 +36,9 @@ export interface EventBus {
 
   /** Stops poll loops; in-flight batches are allowed to finish. */
   stop(): Promise<void>;
+
+  /** Looks up a registered group's handler by name, for dead-letter
+   * replay (re-invoke the exact function a poison message failed
+   * against). Optional: a transport without a replay story can omit it. */
+  getHandler?(group: string): Handler | undefined;
 }

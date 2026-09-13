@@ -28,4 +28,12 @@ export const config = {
     // by deployment.
     batchSize: Number(process.env.WORKFLOW_ENGINE_BATCH_SIZE ?? 50),
   },
+  backpressure: {
+    // Pending outbox rows before ingest starts shedding load (503). Set
+    // high enough that normal bursts (see the load test's 100-concurrency
+    // wave, Phase 06) never trip it, low enough to actually protect a
+    // small Postgres volume from unbounded queue growth if a consumer
+    // genuinely stalls.
+    outboxThreshold: Number(process.env.BACKPRESSURE_OUTBOX_THRESHOLD ?? 20_000),
+  },
 };

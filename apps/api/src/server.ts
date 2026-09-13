@@ -14,6 +14,8 @@ import { ProjectionWorker } from "./modules/projections/worker.js";
 import { registerProjectionRoutes } from "./modules/projections/routes.js";
 import { registerDashboardStream } from "./modules/projections/sse.js";
 import { registerDemoRoutes } from "./modules/demo/routes.js";
+import { registerDeadLetterRoutes } from "./modules/deadletters/routes.js";
+import { BackpressureMonitor } from "./modules/ingest/backpressure.js";
 import { GaugeUpdater } from "./modules/metrics/gauge-updater.js";
 import { registry, httpRequestsTotal, httpRequestDuration } from "./modules/metrics/registry.js";
 
@@ -47,7 +49,13 @@ app.get("/metrics", async (_request, reply) => {
   return registry.metrics();
 });
 
-await registerIngestRoutes(app);
+const backpressureMonitor = new BackpressureMonitor(config.backpressure.outboxThreshold);
+// Always runs, independent of RUN_WORKERS — this instance's ingest route
+// needs backlog visibility even when the async workers live on a
+// different process/instance entirely.
+backpressureMonitor.start();
+
+await registerIngestRoutes(app, backpressureMonitor);
 await registerWorkflowQueryRoutes(app);
 await registerProjectionRoutes(app);
 await registerDashboardStream(app);
@@ -56,6 +64,8 @@ await registerDemoRoutes(app);
 const outboxPublisher = new OutboxPublisher();
 const eventBus = new PostgresEventBus();
 eventBus.subscribe("domain.events", "audit-log", auditLogHandler);
+
+await registerDeadLetterRoutes(app, eventBus);
 
 const workflowEngine = new WorkflowEngine(eventBus);
 for (const def of workflowDefinitions) workflowEngine.register(def);
@@ -97,6 +107,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     await workflowEngine.stop();
     await projectionWorker.stop();
     gaugeUpdater.stop();
+    backpressureMonitor.stop();
     await app.close();
     await pool.end();
     process.exit(0);

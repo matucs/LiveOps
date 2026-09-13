@@ -67,6 +67,34 @@ export async function fetchDemoKey(): Promise<string | null> {
   }
 }
 
+export interface DeadLetter {
+  id: string;
+  source: string;
+  attempts: number;
+  last_error: string;
+  created_at: string;
+  replayed_at: string | null;
+}
+
+export async function fetchDeadLetters(): Promise<DeadLetter[]> {
+  const { deadLetters } = await apiFetch<{ deadLetters: DeadLetter[] }>("/api/v1/dashboard/dead-letters");
+  return deadLetters;
+}
+
+export async function replayDeadLetter(id: string): Promise<{ ok: boolean; message: string }> {
+  try {
+    const res = await fetch(`${getApiUrl()}/api/v1/dead-letters/${id}/replay`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${getApiKey()}` },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, message: body.message || body.error || `HTTP ${res.status}` };
+    return { ok: true, message: "Replayed" };
+  } catch (e: any) {
+    return { ok: false, message: e.message };
+  }
+}
+
 export async function sendDemoOrder(): Promise<void> {
   const id = `evt_ui_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   await apiFetch("/api/v1/events", {

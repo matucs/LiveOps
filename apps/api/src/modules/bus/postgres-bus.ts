@@ -34,6 +34,13 @@ export class PostgresEventBus implements EventBus {
     this.subscriptions.push({ topic, group, handler });
   }
 
+  /** Looks up a registered group's handler directly — used by dead-letter
+   * replay to re-invoke the exact same function a poison message failed
+   * against, bypassing the checkpoint (which has already moved past it). */
+  getHandler(group: string): Handler | undefined {
+    return this.subscriptions.find((s) => s.group === group)?.handler;
+  }
+
   start(): void {
     this.stopped = false;
     this.loops = this.subscriptions.map((sub) => this.runLoop(sub));

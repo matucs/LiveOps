@@ -6,6 +6,7 @@ import { ConnectionBar } from "@/components/ConnectionBar";
 import { ChaosPanel } from "@/components/ChaosPanel";
 import { WorkflowList, type WorkflowSummary } from "@/components/WorkflowList";
 import { Sparkline } from "@/components/Sparkline";
+import { DeadLetterPanel } from "@/components/DeadLetterPanel";
 
 interface Snapshot {
   activity: { event_count: string | number; last_event_at: string | null };
@@ -158,6 +159,11 @@ export default function Dashboard() {
             <div style={label}>Chaos panel</div>
             <ChaosPanel />
           </div>
+        </div>
+
+        <div style={{ ...card, marginTop: 14 }}>
+          <div style={label}>Dead letters</div>
+          <DeadLetterPanel refreshKey={tick * 1000 + (snapshot?.openDeadLetters ?? 0)} />
         </div>
       </div>
     </div>
