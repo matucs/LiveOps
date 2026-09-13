@@ -1,10 +1,18 @@
 "use client";
 
-const DEFAULT_API_URL = "http://localhost:3000";
+// In production this is built empty ("") so every request is a relative
+// path on the same origin — Caddy reverse-proxies /api/* to the API
+// container, so the browser never needs CORS at all. Local dev keeps
+// using two separate ports (localhost:3000/3001), which is why the API
+// still carries CORS support for that case (see apps/api's WEB_ORIGINS).
+const DEFAULT_API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
 
 export function getApiUrl(): string {
   if (typeof window === "undefined") return DEFAULT_API_URL;
-  return localStorage.getItem("liveops_api_url") || DEFAULT_API_URL;
+  // A same-origin default ("") is a deliberate, valid override — only
+  // fall back to localhost when nothing has been stored at all.
+  const stored = localStorage.getItem("liveops_api_url");
+  return stored !== null ? stored : DEFAULT_API_URL;
 }
 
 export function getApiKey(): string {
@@ -39,6 +47,24 @@ export async function triggerChaos(action: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action }),
   });
+}
+
+/**
+ * Fetches the public demo tenant's API key, if the deployment has one
+ * configured (DEMO_API_KEY on the server). Lets a visitor open the live
+ * URL and see real data immediately, with no seed script to run — the
+ * key is scoped to one demo tenant seeded at deploy time, not a
+ * privileged credential.
+ */
+export async function fetchDemoKey(): Promise<string | null> {
+  try {
+    const res = await fetch(`${getApiUrl()}/api/v1/demo/bootstrap`);
+    if (!res.ok) return null;
+    const body = await res.json();
+    return typeof body.apiKey === "string" ? body.apiKey : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function sendDemoOrder(): Promise<void> {

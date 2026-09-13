@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: liveops
+      POSTGRES_USER: liveops
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - liveops_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U liveops -d liveops"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Small VM (~1GB RAM total) — keep Postgres's own footprint modest;
+    # the OS page cache, not shared_buffers, does most of the work here.
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=40"]
+    mem_limit: 300m
+
+  api:
+    image: liveops-api:prod
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://liveops:${POSTGRES_PASSWORD}@postgres:5432/liveops
+      RUN_WORKERS: "true"
+      WEB_ORIGINS: "https://${PUBLIC_DOMAIN}"
+      DEMO_API_KEY: ${DEMO_API_KEY}
+      CONSUMER_POLL_INTERVAL_MS: "500"
+      OUTBOX_POLL_INTERVAL_MS: "500"
+    # Bound to localhost only — Caddy (on the host) reaches this directly;
+    # the public internet only ever reaches port 80/443 via Caddy.
+    ports:
+      - "127.0.0.1:3000:3000"
+    mem_limit: 250m
+
+  web:
+    image: liveops-web:prod
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:3001:3001"
+    mem_limit: 200m
+
+volumes:
+  liveops_pg_data:

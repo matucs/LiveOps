@@ -24,7 +24,7 @@ export function ConnectionBar({ onSaved }: { onSaved: () => void }) {
         value={apiUrl}
         onChange={(e) => setApiUrl(e.target.value)}
         style={inputStyle}
-        placeholder="http://localhost:3000"
+        placeholder={apiUrl === "" ? "(same origin as this page)" : "http://localhost:3000"}
       />
       <span style={{ fontSize: 12, color: "var(--text-faint)" }}>API key</span>
       <input

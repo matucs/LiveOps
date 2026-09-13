@@ -11,12 +11,19 @@ plausible fix that was implemented, measured, and found to do nothing —
 kept in the record instead of edited out, because that's what
 measurement-driven engineering actually looks like.
 
+**Live: https://liveops.130-61-191-125.nip.io** — a real deployment
+(Oracle Cloud free tier, Docker, Caddy, Let's Encrypt), not a screenshot.
+Open it and click **"Send a new order"** in the chaos panel, then
+**"Force shipment to always fail"** and send another, to watch a saga
+complete and then compensate live. See `docs/deployment.md` for how it's
+built and a real bug the deployment itself found and fixed.
+
 ## Status
 
 V1 complete: ingest, transactional outbox, a Postgres-backed event bus,
 a workflow engine with saga compensation, CQRS projections, a live
 dashboard with a chaos panel, a load test that found and fixed two real
-bottlenecks, and this documentation.
+bottlenecks, a live public deployment, and this documentation.
 
 Not built (V1 scope, by design — see "Deliberately not built" below):
 Kafka, Redis, service extraction, an AI incident investigator, cloud
@@ -72,6 +79,7 @@ flowchart TB
 | [006](docs/adr/ADR-006-cqrs.md) | CQRS, scoped — with its one documented exception |
 | [007](docs/adr/ADR-007-sse-over-websockets.md) | SSE over WebSockets for a one-directional dashboard feed |
 | [008](docs/adr/ADR-008-multi-tenancy.md) | Shared schema, single tenant-resolution chokepoint |
+| [009](docs/adr/ADR-009-deployment-topology.md) | Build locally, ship pre-built images to a free-tier VM — found a real timing bug in production |
 
 ## Failure scenarios, demonstrated
 
@@ -99,6 +107,13 @@ commands and observed database state.
 - **A cross-tenant data leak, found before shipping** — the dead-letters
   dashboard route's first draft had no tenant filter at all. Fixed with a
   join before it reached main. ([ADR-008](docs/adr/ADR-008-multi-tenancy.md))
+- **A workflow that finished but was never shown**, found on the live
+  deployment — a projection refresh that only ran alongside new raw
+  events missed a workflow whose steps completed slightly later via a
+  separate consumer group, with no further events to trigger a re-check.
+  Fixed to refresh unconditionally every tick; the orphaned workflow
+  self-healed on the next poll with zero data loss.
+  ([ADR-009](docs/adr/ADR-009-deployment-topology.md), [deployment notes](docs/deployment.md))
 
 ## Performance
 
@@ -118,6 +133,9 @@ size) was measured and found to change nothing; that result is recorded
 alongside the ones that worked, not edited out.
 
 ## Run it
+
+The fastest way to see it working is the [live deployment](https://liveops.130-61-191-125.nip.io)
+above — it bootstraps a demo API key automatically. To run it yourself:
 
 ```bash
 docker compose up -d          # Postgres only in V1 — see note on port 5434 below
@@ -154,9 +172,10 @@ Stated here as scope discipline, not as gaps discovered too late:
   explicit trigger conditions written down for when to migrate, and the
   `EventBus` interface already shaped to make that migration a swap, not
   a rewrite.
-- **Kubernetes, Terraform, cloud deployment** — can't be demoed on a
-  portfolio budget and wasn't the point; a local Docker Compose
-  environment reproduces the whole architecture.
+- **Kubernetes, Terraform** — can't be demoed usefully on a portfolio
+  budget and wasn't the point; the live deployment (ADR-009) is plain
+  Docker Compose on one VM, and a local Docker Compose environment
+  reproduces the same architecture.
 - **An AI incident investigator** — only worth building against real
   telemetry (OpenTelemetry, V2), not as a RAG-over-self-written-runbooks
   demo that would just retrieve its own answer key.

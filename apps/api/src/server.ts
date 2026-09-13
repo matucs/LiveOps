@@ -13,6 +13,7 @@ import { registerWorkflowQueryRoutes } from "./modules/workflow/routes.js";
 import { ProjectionWorker } from "./modules/projections/worker.js";
 import { registerProjectionRoutes } from "./modules/projections/routes.js";
 import { registerDashboardStream } from "./modules/projections/sse.js";
+import { registerDemoRoutes } from "./modules/demo/routes.js";
 
 const app = Fastify({ logger: false });
 
@@ -34,6 +35,7 @@ await registerIngestRoutes(app);
 await registerWorkflowQueryRoutes(app);
 await registerProjectionRoutes(app);
 await registerDashboardStream(app);
+await registerDemoRoutes(app);
 
 const outboxPublisher = new OutboxPublisher();
 const eventBus = new PostgresEventBus();

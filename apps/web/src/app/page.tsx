@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getApiUrl, getApiKey, setCredentials } from "@/lib/api";
+import { getApiUrl, getApiKey, setCredentials, fetchDemoKey } from "@/lib/api";
 import { ConnectionBar } from "@/components/ConnectionBar";
 import { ChaosPanel } from "@/components/ChaosPanel";
 import { WorkflowList, type WorkflowSummary } from "@/components/WorkflowList";
@@ -45,6 +45,18 @@ export default function Dashboard() {
       setCredentials(params.get("apiUrl") || getApiUrl(), urlKey);
       window.history.replaceState({}, "", window.location.pathname);
       setTick((t) => t + 1);
+      return;
+    }
+    // No stored or URL-provided key: try the deployment's public demo
+    // tenant, if one is configured, so a fresh visitor sees real data
+    // immediately rather than a "connect first" wall.
+    if (!getApiKey()) {
+      fetchDemoKey().then((key) => {
+        if (key) {
+          setCredentials(getApiUrl(), key);
+          setTick((t) => t + 1);
+        }
+      });
     }
   }, []);
 

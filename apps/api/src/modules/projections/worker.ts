@@ -70,8 +70,6 @@ export class ProjectionWorker {
       [lastSeq, config.consumer.batchSize],
     );
 
-    if (events.length === 0) return false;
-
     for (const e of events) {
       await this.projectEvent(e);
       await pool.query(`UPDATE consumer_checkpoints SET last_seq = $1, updated_at = now() WHERE handler = $2`, [
@@ -80,13 +78,21 @@ export class ProjectionWorker {
       ]);
     }
 
-    // Workflow executions change after this worker's own event may have
-    // been consumed (a workflow can still be running), so workflow
-    // projections are refreshed on every tick rather than event-by-event —
-    // simpler, and cheap at this scale. See docs for the trade-off.
+    // Workflow executions change via a SEPARATE consumer group
+    // (workflow-trigger) and the engine's own tick, both of which run
+    // independently of this loop and typically a little later than the
+    // triggering event itself. Refreshing this projection only when
+    // `events.length > 0` (the original version of this code) missed
+    // exactly that: a single quiet event's workflow could finish its
+    // steps *after* this tick had already returned early, with no further
+    // raw events ever arriving to trigger another refresh — a workflow
+    // could sit completed forever without ever appearing in the
+    // dashboard. Found live during the first production deployment.
+    // Refreshing unconditionally, every tick, is the actual fix; it's
+    // cheap (one bulk statement, Phase 06) regardless of backlog size.
     await this.refreshWorkflowProjection();
 
-    return true;
+    return events.length > 0;
   }
 
   private async projectEvent(e: { seq: string; tenant_id: string; type: string; occurred_at: string }): Promise<void> {

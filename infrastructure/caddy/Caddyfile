@@ -1,0 +1,16 @@
+liveops.130-61-191-125.nip.io {
+	encode gzip
+
+	# API and its live stream — matched first, more specific paths win.
+	handle /api/* {
+		reverse_proxy localhost:3000
+	}
+	handle /healthz {
+		reverse_proxy localhost:3000
+	}
+
+	# Everything else is the Next.js dashboard.
+	handle {
+		reverse_proxy localhost:3001
+	}
+}
