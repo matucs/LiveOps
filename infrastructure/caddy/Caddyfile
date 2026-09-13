@@ -8,6 +8,13 @@ liveops.130-61-191-125.nip.io {
 	handle /healthz {
 		reverse_proxy localhost:3000
 	}
+	# Exposed publicly on this portfolio deployment deliberately — real
+	# Prometheus output someone can actually look at is worth more here
+	# than the marginal operational-info risk. A production deployment
+	# with something to protect would keep this internal-only.
+	handle /metrics {
+		reverse_proxy localhost:3000
+	}
 
 	# Everything else is the Next.js dashboard.
 	handle {

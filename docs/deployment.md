@@ -6,6 +6,19 @@ low-cost-portfolio pattern used elsewhere: real `docker compose`, real
 Caddy, real Let's Encrypt TLS via a `nip.io` domain (no purchased domain
 needed).
 
+**Kept in sync with Phase 08 (V2)**: circuit breakers, DLQ replay,
+backpressure, and Prometheus metrics are live in production, not just
+locally — verified after redeploy by sending a real event through the
+live URL and watching `/metrics` update. `/metrics` is deliberately
+exposed publicly on Caddy here (`handle /metrics`) — a portfolio choice
+(real numbers anyone can look at are worth more than the marginal
+operational-info cost); a deployment with something to actually protect
+would keep it internal-only. Distributed tracing stays local-only
+(ADR-011) — this VM has no headroom for a trace backend alongside
+Postgres, the API, and the dashboard; `OTEL_EXPORTER_OTLP_ENDPOINT` is
+unset in `.env.production`, and `otel/register.mjs` no-ops completely
+when it's unset, so this costs production nothing.
+
 ## Why build images locally instead of on the VM
 
 At ~1GB RAM, running `npm run build` (TypeScript + Next.js/webpack) on the
