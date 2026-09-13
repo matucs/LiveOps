@@ -18,6 +18,7 @@ const scenarios = [
   ["04-circuit-breaker", "./04-circuit-breaker.mjs"],
   ["05-process-crash-recovery", "./05-process-crash-recovery.mjs"],
   ["06-database-unavailable", "./06-database-unavailable.mjs"],
+  ["07-chaos-tenant-isolation", "./07-chaos-tenant-isolation.mjs"],
 ];
 
 let passed = 0;

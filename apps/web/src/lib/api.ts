@@ -42,19 +42,40 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 }
 
 export async function triggerChaos(action: string): Promise<void> {
+  // Now tenant-scoped (Phase 09) — requires the same Authorization header
+  // as every other route, so this visitor's chaos actions only ever
+  // affect their own sandbox tenant's workflows.
   await fetch(`${getApiUrl()}/api/v1/_dev/chaos`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${getApiKey()}`, "Content-Type": "application/json" },
     body: JSON.stringify({ action }),
   });
 }
 
 /**
- * Fetches the public demo tenant's API key, if the deployment has one
- * configured (DEMO_API_KEY on the server). Lets a visitor open the live
- * URL and see real data immediately, with no seed script to run — the
- * key is scoped to one demo tenant seeded at deploy time, not a
- * privileged credential.
+ * Provisions a fresh, per-visitor sandbox tenant (Phase 09) and returns
+ * its API key. Called once per browser — the returned key is then
+ * persisted (setCredentials) so a returning visitor reuses their own
+ * tenant instead of getting a new one every page load. Replaces the
+ * Phase 05 shared-demo-tenant bootstrap as the dashboard's default:
+ * every visitor's chaos actions and workflow traffic are now genuinely
+ * isolated from every other visitor's, not just visually separated by
+ * browser tab.
+ */
+export async function createSandboxTenant(): Promise<string | null> {
+  try {
+    const res = await fetch(`${getApiUrl()}/api/v1/demo/sandbox`, { method: "POST" });
+    if (!res.ok) return null;
+    const body = await res.json();
+    return typeof body.apiKey === "string" ? body.apiKey : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Legacy shared demo tenant, kept for an old bookmarked link — no longer
+ * what the dashboard calls by default (see createSandboxTenant).
  */
 export async function fetchDemoKey(): Promise<string | null> {
   try {

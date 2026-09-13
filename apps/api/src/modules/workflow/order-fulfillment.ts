@@ -61,7 +61,7 @@ export const orderFulfillmentWorkflow: WorkflowDefinition = {
       async execute(ctx: StepContext) {
         return paymentBreaker.execute(() =>
           withSpan("external.payment-provider", { executionId: ctx.executionId }, async () => {
-            if (chaos.consumePaymentFault()) {
+            if (chaos.consumePaymentFault(ctx.tenantId)) {
               throw new Error("payment provider declined the charge (injected fault)");
             }
             log("info", "step: charge payment", { executionId: ctx.executionId });
@@ -85,7 +85,7 @@ export const orderFulfillmentWorkflow: WorkflowDefinition = {
       async execute(ctx: StepContext) {
         return shippingBreaker.execute(() =>
           withSpan("external.shipping-carrier", { executionId: ctx.executionId }, async () => {
-            if (chaos.consumeShipmentFault()) {
+            if (chaos.consumeShipmentFault(ctx.tenantId)) {
               throw new Error("shipping carrier rejected the label (injected fault)");
             }
             log("info", "step: create shipment", { executionId: ctx.executionId });

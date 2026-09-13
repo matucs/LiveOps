@@ -82,6 +82,7 @@ flowchart TB
 | [009](docs/adr/ADR-009-deployment-topology.md) | Build locally, ship pre-built images to a free-tier VM — found a real timing bug in production |
 | [010](docs/adr/ADR-010-redis-usage.md) | Redis — not used, each candidate use case already has a better answer |
 | [011](docs/adr/ADR-011-observability.md) | Trace context persisted as data, not ambient state — one continuous trace across every async boundary |
+| [012](docs/adr/ADR-012-sandbox-tenants.md) | Per-visitor sandbox tenants — the Phase 03 chaos-leak fix, now an automated regression test |
 
 ## Failure scenarios, demonstrated
 
@@ -193,10 +194,11 @@ Stated here as scope discipline, not as gaps discovered too late:
 - The workflow-summary projection reads `workflow_executions` directly
   rather than being purely event-sourced (ADR-006) — the engine doesn't
   yet emit a per-transition domain event.
-- The chaos panel's fault toggles are process-global, not scoped per
-  tenant/execution — confirmed directly in Phase 03 by tracing a fault to
-  the wrong concurrent execution. Fine for a solo demo, not for
-  simultaneous use. Planned fix: a per-visitor sandbox tenant (V2).
+- ~~The chaos panel's fault toggles were process-global~~ — fixed in
+  Phase 09 (ADR-012): each visitor gets their own sandbox tenant, chaos
+  state is scoped per tenant, and the fix has an automated regression
+  test. The circuit breakers deliberately remain global — they model a
+  genuinely shared dependency (ADR-012).
 - The SSE stream accepts the API key as a `?token=` query param (the
   browser's `EventSource` can't set headers) — fine locally
   ([ADR-007](docs/adr/ADR-007-sse-over-websockets.md)), a production

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getApiUrl, getApiKey, setCredentials, fetchDemoKey } from "@/lib/api";
+import { getApiUrl, getApiKey, setCredentials, createSandboxTenant } from "@/lib/api";
 import { ConnectionBar } from "@/components/ConnectionBar";
 import { ChaosPanel } from "@/components/ChaosPanel";
 import { WorkflowList, type WorkflowSummary } from "@/components/WorkflowList";
@@ -48,11 +48,12 @@ export default function Dashboard() {
       setTick((t) => t + 1);
       return;
     }
-    // No stored or URL-provided key: try the deployment's public demo
-    // tenant, if one is configured, so a fresh visitor sees real data
-    // immediately rather than a "connect first" wall.
+    // No stored or URL-provided key: provision this visitor their own
+    // sandbox tenant (Phase 09) so they see real, isolated data
+    // immediately rather than a "connect first" wall — and so their
+    // chaos-panel clicks never collide with another visitor's.
     if (!getApiKey()) {
-      fetchDemoKey().then((key) => {
+      createSandboxTenant().then((key) => {
         if (key) {
           setCredentials(getApiUrl(), key);
           setTick((t) => t + 1);

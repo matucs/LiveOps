@@ -38,32 +38,39 @@ export async function registerWorkflowQueryRoutes(app: FastifyInstance) {
     return { execution: rows[0], steps };
   });
 
-  // Dev-only fault injection — no tenant scoping needed, it's process-global
-  // in-memory state for a single-tenant local demo. Superseded by the real
-  // chaos panel in Phase 05.
-  app.post<{ Body: { action: string } }>("/api/v1/_dev/chaos", async (request, reply) => {
+  // Fault injection, scoped per tenant (Phase 09) — required for the live
+  // public deployment: two visitors clicking "fail next payment" at the
+  // same moment must not interfere with each other. See chaos.ts for the
+  // Phase 03 -> Phase 09 history of this scoping. The circuit breakers
+  // (circuit-breaker.ts) are deliberately NOT tenant-scoped alongside
+  // this — they model a genuinely shared external dependency, so one
+  // tenant's fault injection tripping the breaker correctly affects
+  // every tenant's calls to it, the same way a real payment provider
+  // outage would.
+  app.post<{ Body: { action: string } }>("/api/v1/_dev/chaos", { preHandler: requireTenant }, async (request, reply) => {
+    const tenantId = request.tenant!.tenantId;
     switch (request.body?.action) {
       case "fail-next-payment":
-        chaos.failNextPayment();
+        chaos.failNextPayment(tenantId);
         break;
       case "fail-next-shipment":
-        chaos.failNextShipment();
+        chaos.failNextShipment(tenantId);
         break;
       case "fail-payment-always-on":
-        chaos.setPaymentAlwaysFails(true);
+        chaos.setPaymentAlwaysFails(tenantId, true);
         break;
       case "fail-payment-always-off":
-        chaos.setPaymentAlwaysFails(false);
+        chaos.setPaymentAlwaysFails(tenantId, false);
         break;
       case "fail-shipment-always-on":
-        chaos.setShipmentAlwaysFails(true);
+        chaos.setShipmentAlwaysFails(tenantId, true);
         break;
       case "fail-shipment-always-off":
-        chaos.setShipmentAlwaysFails(false);
+        chaos.setShipmentAlwaysFails(tenantId, false);
         break;
       default:
         return reply.code(400).send({ error: "unknown_action" });
     }
-    return { chaos: chaos.snapshot() };
+    return { chaos: chaos.snapshot(tenantId) };
   });
 }
