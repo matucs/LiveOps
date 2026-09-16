@@ -83,6 +83,7 @@ flowchart TB
 | [010](docs/adr/ADR-010-redis-usage.md) | Redis — not used, each candidate use case already has a better answer |
 | [011](docs/adr/ADR-011-observability.md) | Trace context persisted as data, not ambient state — one continuous trace across every async boundary |
 | [012](docs/adr/ADR-012-sandbox-tenants.md) | Per-visitor sandbox tenants — the Phase 03 chaos-leak fix, now an automated regression test |
+| [013](docs/adr/ADR-013-kafka-migration.md) | The Postgres→Kafka migration, measured — three real bugs found producing the number, comparable throughput, staying on Postgres |
 
 ## Failure scenarios, demonstrated
 
@@ -171,10 +172,12 @@ API_KEY=<key> DATABASE_URL=postgres://liveops:liveops_dev_password@localhost:543
 
 Stated here as scope discipline, not as gaps discovered too late:
 
-- **Kafka / Redpanda** — Postgres is the event bus (ADR-002), with
-  explicit trigger conditions written down for when to migrate, and the
-  `EventBus` interface already shaped to make that migration a swap, not
-  a rewrite.
+- ~~Kafka / Redpanda~~ — **built and measured in V2** (ADR-013): a
+  complete, local-only Kafka transport behind the same `EventBus`
+  interface, comparable throughput to Postgres at this scale, and staying
+  on Postgres in production because the migration didn't buy back its own
+  operational cost here. `docker compose --profile kafka up -d redpanda`
+  to run it yourself.
 - **Kubernetes, Terraform** — can't be demoed usefully on a portfolio
   budget and wasn't the point; the live deployment (ADR-009) is plain
   Docker Compose on one VM, and a local Docker Compose environment

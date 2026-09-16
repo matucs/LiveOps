@@ -6,6 +6,9 @@ import { registerIngestRoutes } from "./modules/ingest/routes.js";
 import { pool } from "./db/pool.js";
 import { OutboxPublisher } from "./modules/bus/outbox-publisher.js";
 import { PostgresEventBus } from "./modules/bus/postgres-bus.js";
+import { KafkaOutboxPublisher } from "./modules/bus/kafka/kafka-outbox-publisher.js";
+import { KafkaEventBus } from "./modules/bus/kafka/kafka-event-bus.js";
+import type { EventBus } from "./modules/bus/types.js";
 import { auditLogHandler } from "./modules/audit/handler.js";
 import { WorkflowEngine } from "./modules/workflow/engine.js";
 import { workflowDefinitions } from "./modules/workflow/registry.js";
@@ -61,8 +64,13 @@ await registerProjectionRoutes(app);
 await registerDashboardStream(app);
 await registerDemoRoutes(app);
 
-const outboxPublisher = new OutboxPublisher();
-const eventBus = new PostgresEventBus();
+// Transport selection (ADR-002, ADR-013): same EventBus interface either
+// way, chosen once at process start. Every caller below (audit-log,
+// workflow-trigger, projection-worker, dead-letter replay) is written
+// against the interface and doesn't know or care which one is live.
+const usingKafka = config.eventBus.driver === "kafka";
+const outboxPublisher = usingKafka ? new KafkaOutboxPublisher() : new OutboxPublisher();
+const eventBus: EventBus = usingKafka ? new KafkaEventBus() : new PostgresEventBus();
 eventBus.subscribe("domain.events", "audit-log", auditLogHandler);
 
 await registerDeadLetterRoutes(app, eventBus);
@@ -74,12 +82,13 @@ const projectionWorker = new ProjectionWorker();
 const gaugeUpdater = new GaugeUpdater();
 
 if (config.runWorkers) {
-  outboxPublisher.start();
+  await outboxPublisher.start();
   eventBus.start();
   workflowEngine.start();
   projectionWorker.start();
   gaugeUpdater.start();
   log("info", "workers started", {
+    driver: config.eventBus.driver,
     workers: ["outbox-publisher", "event-bus:audit-log", "workflow-engine", "projection-worker", "gauge-updater"],
   });
 } else {

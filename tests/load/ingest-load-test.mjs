@@ -27,8 +27,23 @@ function percentile(sorted, p) {
   return sorted[idx];
 }
 
-async function fireOne(seq) {
-  const eventId = `${RUN_ID}_${seq}`;
+async function fireOne(waveLabel, seq) {
+  // waveLabel makes this globally unique across waves, not just within
+  // one — each wave's `next` counter independently starts at 0, so
+  // without a per-wave prefix, "moderate" would re-send every ID
+  // "warmup" already used, "high" would re-send moderate's AND
+  // warmup's, and so on. Those resends are correctly rejected as
+  // duplicates (idempotency working as designed) — but a duplicate
+  // rejection still consumes a BIGSERIAL sequence value without ever
+  // creating a row (the exact gap mechanism documented in
+  // docs/phase-03-notes.md), which silently inflated max(seq) past the
+  // true number of real events every wave actually created. That
+  // inflated target is what made a later drain check's "lag" plateau at
+  // a small, never-closing residual instead of reaching zero — a
+  // measurement bug in this script, not in the pipeline it measures.
+  // Found and fixed during the V2 Kafka migration's load test
+  // (docs/phase-10-notes.md).
+  const eventId = `${RUN_ID}_${waveLabel}_${seq}`;
   const start = performance.now();
   const res = await fetch(`${API_URL}/api/v1/events`, {
     method: "POST",
@@ -42,7 +57,7 @@ async function fireOne(seq) {
 }
 
 /** Runs `total` requests at `concurrency` in-flight at once, returns latencies (ms). */
-async function runWave(total, concurrency) {
+async function runWave(waveLabel, total, concurrency) {
   const latencies = [];
   let next = 0;
   let errors = 0;
@@ -51,7 +66,7 @@ async function runWave(total, concurrency) {
     while (next < total) {
       const seq = next++;
       try {
-        latencies.push(await fireOne(seq));
+        latencies.push(await fireOne(waveLabel, seq));
       } catch {
         errors++;
       }
@@ -123,7 +138,7 @@ async function main() {
 
   const results = [];
   for (const wave of waves) {
-    const outcome = await runWave(wave.total, wave.concurrency);
+    const outcome = await runWave(wave.label, wave.total, wave.concurrency);
     results.push({ ...wave, ...report(wave.label, wave.total, wave.concurrency, outcome) });
   }
 

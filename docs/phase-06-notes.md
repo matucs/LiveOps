@@ -1,5 +1,22 @@
 # Phase 06 — Load Test
 
+> **Correction, added during Phase 10.** The claim two lines below this
+> one — "full control over unique eventIds per request" — was wrong, and
+> the drain-time numbers in this document are consequently understated.
+> The script's own event-ID generation had a cross-wave collision bug
+> (each wave's counter reset to 0), so a meaningful fraction of the
+> "6,200 requests" below were actually duplicate resends, correctly
+> rejected by idempotency but still consuming `events.seq` values with no
+> row created — inflating the drain target past the true number of real
+> events and understating the true per-event downstream cost. Found,
+> understood, and fixed while measuring the Phase 10 Kafka migration; see
+> `docs/phase-10-notes.md` for the full trail and corrected numbers
+> (**45s**, not ~23s, to drain 6,200 genuinely distinct events on
+> Postgres). The bottleneck-finding conclusions below (the N+1, the
+> sequential-processing fix) remain correct — they were about *relative*
+> before/after change, not the absolute numbers, which is exactly why
+> this correction doesn't retract the fixes, only the numbers.
+
 A custom Node script (`tests/load/ingest-load-test.mjs`) rather than
 k6/autocannon: full control over unique `eventId`s per request (essential
 — idempotency dedup would otherwise silently skew throughput numbers) and

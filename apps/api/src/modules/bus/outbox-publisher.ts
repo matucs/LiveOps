@@ -21,7 +21,7 @@ export class OutboxPublisher {
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
 
-  start() {
+  async start(): Promise<void> {
     this.scheduleNext(0);
   }
 

@@ -16,11 +16,19 @@ export async function run() {
 
   // Wait for tenant A's workflow to actually appear, so this test proves
   // isolation against REAL populated state, not an empty table both
-  // tenants would trivially "pass" against.
-  await poll(async () => {
-    const { body } = await get("/api/v1/dashboard/workflows", a.apiKey);
-    return body.workflows?.length > 0;
-  });
+  // tenants would trivially "pass" against. 30s, not the default 15s:
+  // under EVENT_BUS_DRIVER=kafka, a consumer group's first message after
+  // a fresh server start pays a real join/sync cold-start cost (a
+  // genuine Kafka trade-off, not a bug — see docs/phase-10-notes.md) that
+  // the default timeout was tuned around the Postgres transport's
+  // immediate-poll behavior without accounting for.
+  await poll(
+    async () => {
+      const { body } = await get("/api/v1/dashboard/workflows", a.apiKey);
+      return body.workflows?.length > 0;
+    },
+    { timeoutMs: 30000 },
+  );
 
   const [aActivity, bActivity] = await Promise.all([
     get("/api/v1/dashboard/activity", a.apiKey),

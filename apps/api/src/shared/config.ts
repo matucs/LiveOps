@@ -28,6 +28,15 @@ export const config = {
     // by deployment.
     batchSize: Number(process.env.WORKFLOW_ENGINE_BATCH_SIZE ?? 50),
   },
+  eventBus: {
+    // "postgres" (V1, ADR-002) or "kafka" (V2 migration, ADR-013) — same
+    // EventBus interface either way, chosen at process start, not
+    // per-message. Kept out of production (ADR-002 names the actual
+    // trigger conditions for switching); exists so the migration's
+    // before/after load-test numbers are real, not projected.
+    driver: process.env.EVENT_BUS_DRIVER ?? "postgres",
+    kafkaBrokers: (process.env.KAFKA_BROKERS ?? "localhost:9092").split(",").map((s) => s.trim()),
+  },
   backpressure: {
     // Pending outbox rows before ingest starts shedding load (503). Set
     // high enough that normal bursts (see the load test's 100-concurrency
