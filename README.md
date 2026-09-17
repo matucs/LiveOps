@@ -6,10 +6,14 @@ engineering, observability, and measurement-driven performance work.**
 
 Built as a modular monolith first, deliberately. Every architectural
 choice below was made against a real alternative, most were tested by
-actually breaking the system, and one section (Phase 06) documents a
-plausible fix that was implemented, measured, and found to do nothing —
-kept in the record instead of edited out, because that's what
-measurement-driven engineering actually looks like.
+actually breaking the system, and two sections (Phase 06, Phase 10)
+document a plausible fix that was implemented, measured, and found to
+help less than expected — or not at all — kept in the record instead of
+edited out, because that's what measurement-driven engineering actually
+looks like. Phase 10 is the fullest example: measuring a Postgres→Kafka
+migration meant finding and fixing three unrelated bugs first, including
+one in the load-testing tool this project had been trusting since
+Phase 06.
 
 **Live: https://liveops.130-61-191-125.nip.io** — a real deployment
 (Oracle Cloud free tier, Docker, Caddy, Let's Encrypt), not a screenshot.
@@ -20,39 +24,55 @@ built and a real bug the deployment itself found and fixed.
 
 ## Status
 
-V1 complete: ingest, transactional outbox, a Postgres-backed event bus,
-a workflow engine with saga compensation, CQRS projections, a live
+**V1 and V2 both complete.** V1: ingest, transactional outbox, an event
+bus, a workflow engine with saga compensation, CQRS projections, a live
 dashboard with a chaos panel, a load test that found and fixed two real
-bottlenecks, a live public deployment, and this documentation.
+bottlenecks. V2: real distributed tracing, Prometheus metrics, circuit
+breakers, dead-letter replay, backpressure, an automated failure-test
+suite, per-visitor sandbox tenants, and a complete second event-bus
+transport (Kafka) built and measured against the first — 13 ADRs and 10
+phase write-ups total, every one of them backed by something actually run
+against the live system, not reasoned about in the abstract.
 
-Not built (V1 scope, by design — see "Deliberately not built" below):
-Kafka, Redis, service extraction, an AI incident investigator, cloud
-deployment. The [full build plan](https://claude.ai/code/artifact/cd104abd-e269-4ee2-a125-d6ca1b7ae08a),
-including the V2 roadmap for these, was scoped before writing any code.
+Not built, by design (see "Deliberately not built" below): an AI
+incident investigator (deliberately gated on real telemetry existing
+first — it now does) and Kubernetes/Terraform, which would cost real
+money and demonstrate nothing a portfolio project needs to. The
+[full build plan](https://claude.ai/code/artifact/cd104abd-e269-4ee2-a125-d6ca1b7ae08a)
+was scoped before writing any code.
 
 ## Architecture
 
 See [`docs/diagrams/`](docs/diagrams/) for the full set (source-controlled
 Mermaid, kept in sync with the implementation, not the aspirational
-target). Start with the container diagram:
+target). Start with the container diagram — this is what's actually
+deployed; the two dashed boxes are real, working, and **local-only by
+choice** (ADR-011, ADR-013), not stubs:
 
 ```mermaid
 flowchart TB
     Browser["Next.js dashboard<br/>(apps/web)"] -- "REST + SSE" --> HTTP
     Caller["curl / external caller"] -- "REST" --> HTTP
     subgraph API["apps/api — one Node process"]
-        HTTP["Fastify HTTP layer"]
+        HTTP["Fastify HTTP layer<br/>(+ /metrics, Prometheus)"]
         Outbox["OutboxPublisher"]
-        Bus["PostgresEventBus<br/>(2 consumer groups)"]
-        Engine["WorkflowEngine"]
+        Bus["EventBus<br/>(Postgres in prod, Kafka available — ADR-002/013)"]
+        Engine["WorkflowEngine<br/>(+ circuit breakers)"]
         Proj["ProjectionWorker"]
     end
     PG[("Postgres")]
+    Jaeger["Jaeger<br/>(local only, ADR-011)"]
+    Kafka["Redpanda<br/>(local only, ADR-013)"]
     HTTP --> PG
     Outbox --> PG
     Bus --> PG
     Engine --> PG
     Proj --> PG
+    HTTP -.->|"traces, when enabled"| Jaeger
+    Bus -.->|"driver=kafka"| Kafka
+
+    style Jaeger stroke-dasharray: 5 5
+    style Kafka stroke-dasharray: 5 5
 ```
 
 ## Key engineering problems this project actually solves
@@ -65,7 +85,13 @@ flowchart TB
 | Saga compensation ordering | Orchestration, reverse-order compensation ([ADR-004](docs/adr/ADR-004-saga-orchestration.md)) | Forced a step to fail permanently; verified exact reverse-order rollback via `step_executions` |
 | Event replay / rebuild | Per-consumer checkpoints (`consumer_checkpoints`) | A newly-added consumer group replays the full log from seq 0 automatically — observed live when Phase 03 added the workflow-trigger group |
 | Scalability under load | Measured, not claimed ([Phase 06 notes](docs/phase-06-notes.md)) | 3,446 events/sec, p95 43.8ms — and two real bottlenecks found and fixed by measurement |
-| Observability | Structured JSON logs today; OpenTelemetry planned for V2 | Every log line carries `level`, `msg`, `time` + context; correlation IDs flow through every event |
+| Distributed tracing across async boundaries | Trace context persisted as data, not ambient state ([ADR-011](docs/adr/ADR-011-observability.md)) | One trace ID, 22 spans, spanning the outbox publisher's tick, two consumer groups, and five workflow steps — verified in a real Jaeger trace |
+| A struggling dependency shouldn't take everything else down with it | Circuit breakers on both external-shaped saga steps ([ADR-011](docs/adr/ADR-011-observability.md)) | Forced 3 consecutive payment failures; the breaker opened and the next call failed fast instead of retrying against a known-dead dependency |
+| Recovering a dead message | Dead-letter replay, scoped to what's actually safely replayable ([Phase 08 notes](docs/phase-08-notes.md)) | Replayed a real dead letter from Phase 03's old bug — its long-orphaned event spawned and completed the workflow it was always supposed to trigger |
+| Staying stable when consumers fall behind | Backpressure: ingest sheds load past a backlog threshold | Set the threshold to 1 with workers off: first request `201`, next two `503` with the real backlog count; released once the backlog drained |
+| Concurrent public users breaking each other's demo | Per-visitor sandbox tenants, chaos state scoped per tenant ([ADR-012](docs/adr/ADR-012-sandbox-tenants.md)) | Two tenants trigger conflicting chaos state at the same instant — one compensates, the other completes normally, as an automated regression test |
+| "Should this actually be on Kafka?" | Built and measured, not assumed ([ADR-013](docs/adr/ADR-013-kafka-migration.md)) | A complete second `EventBus` implementation; comparable throughput to Postgres at this scale, three real bugs found producing that number, staying on Postgres |
+| Observability | Structured JSON logs (`traceId`/`spanId` on every line) everywhere; real OpenTelemetry tracing + Prometheus metrics locally ([docs/observability.md](docs/observability.md)) | `/metrics` shows live counters under real traffic; a live Jaeger trace shows the full request path |
 
 ## Architecture decisions
 
@@ -168,7 +194,21 @@ API_KEY=<key> DATABASE_URL=postgres://liveops:liveops_dev_password@localhost:543
   node tests/load/ingest-load-test.mjs
 ```
 
-## Deliberately not built in V1
+Or the automated failure suite (7 scenarios — crash recovery, tenant
+isolation, saga compensation, circuit breaker, backpressure's cousins):
+
+```bash
+node tests/failure/run-all.mjs
+```
+
+**Optional V2 profiles**, both local-only by design (ADR-011, ADR-013):
+
+```bash
+docker compose --profile observability up -d jaeger   # real tracing UI at :16686
+docker compose --profile kafka up -d redpanda          # then EVENT_BUS_DRIVER=kafka npm run dev
+```
+
+## Deliberately not built
 
 Stated here as scope discipline, not as gaps discovered too late:
 
@@ -182,9 +222,11 @@ Stated here as scope discipline, not as gaps discovered too late:
   budget and wasn't the point; the live deployment (ADR-009) is plain
   Docker Compose on one VM, and a local Docker Compose environment
   reproduces the same architecture.
-- **An AI incident investigator** — only worth building against real
-  telemetry (OpenTelemetry, V2), not as a RAG-over-self-written-runbooks
-  demo that would just retrieve its own answer key.
+- **An AI incident investigator** — deliberately gated on real telemetry
+  existing first, not built as a RAG-over-self-written-runbooks demo that
+  would just retrieve its own answer key. Real tracing and metrics now
+  exist (ADR-011) — this is the one piece of the original plan still
+  open, on purpose, until it's worth doing properly.
 - **Redis** — no measured need for caching or distributed locks yet;
   Postgres covers both at this scale.
 - **Full event sourcing** — the event log is real and is what the
@@ -213,18 +255,23 @@ Stated here as scope discipline, not as gaps discovered too late:
 
 ```text
 apps/
-  api/     Fastify API + all four in-process workers (ingest, outbox,
-           event bus, workflow engine, projections)
+  api/     Fastify API + five in-process workers (ingest, outbox,
+           event bus — Postgres or Kafka, workflow engine, projections,
+           gauge updater); circuit breakers, backpressure, /metrics
   web/     Next.js dashboard — a genuinely separate deployable, calling
            the API over CORS, not a same-origin proxy
 docs/
-  adr/           architecture decisions, one per real trade-off
+  adr/           13 architecture decisions, one per real trade-off
   diagrams/      Mermaid, kept in sync with what's actually built
   phase-*-notes.md   what was verified at each build phase, including
                      bugs found and fixes that didn't work
+  deployment.md, observability.md
   screenshots/
 tests/
-  load/    the load test that found Phase 06's two bottlenecks
+  load/     the load test that found Phase 06's and Phase 10's bottlenecks
+            (including a bug in the load test itself)
+  failure/  7 automated scenarios — crash recovery, tenant isolation,
+            saga compensation, circuit breaker, chaos-tenant isolation
 ```
 
 ## Note on port 5432
